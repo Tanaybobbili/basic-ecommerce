@@ -52,6 +52,16 @@ A full-stack product management application with Spring Boot backend and React f
 
 Backend runs on port 8080 and frontend runs on port 3000. CORS is configured to allow frontend to communicate with backend.
 
+### Run Commands (PowerShell)
+- Backend:
+```
+./mvnw spring-boot:run
+```
+- Frontend:
+```
+npm start
+```
+
 ## Database
 
-The application uses H2 in-memory database. Some sample items are automatically loaded on startup.
+The application uses mongodb atlas for database

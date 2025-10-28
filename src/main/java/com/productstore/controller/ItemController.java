@@ -1,92 +1,139 @@
 package com.productstore.controller;
 
-import com.productstore.model.Item;
-import com.productstore.service.ItemService;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.util.List;
+import com.productstore.model.Item;
+import com.productstore.service.ItemService;
 
 @RestController
-@CrossOrigin(origins = "http://localhost:3000")
 @RequestMapping("/api")
+@CrossOrigin(origins = "http://localhost:3000")
 public class ItemController {
+	
+	@Autowired
+	private ItemService itemService;
 
-    @Autowired
-    private ItemService service;
+	private final Path uploadDir = Paths.get("uploads");
+	
+	@GetMapping("/items")
+	public List<Item> getAllItems() {
+		return itemService.getAllItems();
+	}
+	
+	@GetMapping("/item/{id}")
+	public ResponseEntity<Item> getItemById(@PathVariable String id) {
+		Optional<Item> item = itemService.getItemById(id);
+		return item.map(ResponseEntity::ok)
+				   .orElse(ResponseEntity.notFound().build());
+	}
+	
+	@PostMapping(value = "/item", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public ResponseEntity<Item> addItem(@RequestParam("name") String name,
+									   @RequestParam("description") String description,
+									   @RequestParam("price") double price,
+									   @RequestParam(value = "image", required = false) MultipartFile image) {
+		Item item = new Item();
+		item.setName(name);
+		item.setDescription(description);
+		item.setPrice(price);
 
-    @GetMapping("/items")
-    public ResponseEntity<List<Item>> getAllItems(){
-        return new ResponseEntity<>(service.getAllItems(), HttpStatus.OK);
-    }
+		Item saved = itemService.addItem(item);
 
-    @GetMapping("/item/{id}")
-    public ResponseEntity<Item> getItem(@PathVariable String id){
-        Item item = service.getItemById(id);
+		if (image != null && !image.isEmpty()) {
+			try {
+				if (!Files.exists(uploadDir)) {
+					Files.createDirectories(uploadDir);
+				}
+				String originalFilename = StringUtils.cleanPath(image.getOriginalFilename() == null ? "image" : image.getOriginalFilename());
+				String ext = originalFilename.contains(".") ? originalFilename.substring(originalFilename.lastIndexOf('.')) : "";
+				String filename = saved.getId() + "_" + UUID.randomUUID() + ext;
+				Path destination = uploadDir.resolve(filename);
+				Files.copy(image.getInputStream(), destination, StandardCopyOption.REPLACE_EXISTING);
+				saved.setImagePath(filename);
+				saved = itemService.addItem(saved);
+			} catch (IOException e) {
+				return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+			}
+		}
 
-        if(item != null)
-            return new ResponseEntity<>(item, HttpStatus.OK);
-        else
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
-    }
+		return new ResponseEntity<>(saved, HttpStatus.CREATED);
+	}
+	
+	@PutMapping("/item/{id}")
+	public ResponseEntity<Item> updateItem(@PathVariable String id, @RequestBody Item item) {
+		Item updatedItem = itemService.updateItem(id, item);
+		if (updatedItem != null) {
+			return ResponseEntity.ok(updatedItem);
+		}
+		return ResponseEntity.notFound().build();
+	}
+	
+	@DeleteMapping("/item/{id}")
+	public ResponseEntity<Void> deleteItem(@PathVariable String id) {
+		// delete image file if present
+		itemService.getItemById(id).ifPresent(item -> {
+			if (item.getImagePath() != null) {
+				Path imagePath = uploadDir.resolve(item.getImagePath());
+				try {
+					Files.deleteIfExists(imagePath);
+				} catch (IOException ignored) {}
+			}
+		});
+		boolean deleted = itemService.deleteItem(id);
+		if (deleted) {
+			return ResponseEntity.noContent().build();
+		}
+		return ResponseEntity.notFound().build();
+	}
+	
+	@GetMapping("/items/search")
+	public List<Item> searchItems(@RequestParam String keyword) {
+		return itemService.searchItems(keyword);
+	}
 
-    @PostMapping("/item")
-    public ResponseEntity<?> addItem(@RequestPart Item item,
-                                        @RequestPart MultipartFile imageFile){
-        try {
-            Item savedItem = service.addItem(item, imageFile);
-            return new ResponseEntity<>(savedItem, HttpStatus.CREATED);
-        }
-        catch(Exception e){
-            return new ResponseEntity<>(e.getMessage(),HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    @GetMapping("/item/{itemId}/image")
-    public ResponseEntity<byte[]> getImageByItemId(@PathVariable String itemId){
-        Item item = service.getItemById(itemId);
-        byte[] imageFile = item.getImageData();
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.valueOf(item.getImageType()))
-                .body(imageFile);
-    }
-
-    @PutMapping("/item/{id}")
-    public ResponseEntity<String> updateItem(@PathVariable String id, @RequestPart Item item,
-                                                @RequestPart MultipartFile imageFile){
-        Item updatedItem = null;
-        try {
-            updatedItem = service.updateItem(id, item, imageFile);
-        } catch (IOException e) {
-            return new ResponseEntity<>("Failed to update", HttpStatus.BAD_REQUEST);
-        }
-        if(updatedItem != null)
-            return new ResponseEntity<>("Updated", HttpStatus.OK);
-        else
-            return new ResponseEntity<>("Failed to update", HttpStatus.BAD_REQUEST);
-    }
-
-    @DeleteMapping("/item/{id}")
-    public ResponseEntity<String> deleteItem(@PathVariable String id){
-        Item item = service.getItemById(id);
-        if(item != null) {
-            service.deleteItem(id);
-            return new ResponseEntity<>("Deleted", HttpStatus.OK);
-        }
-        else
-            return new ResponseEntity<>("Item not found", HttpStatus.NOT_FOUND);
-    }
-
-    @GetMapping("/items/search")
-    public ResponseEntity<List<Item>> searchItems(@RequestParam String keyword){
-        List<Item> items = service.searchItems(keyword);
-        return new ResponseEntity<>(items, HttpStatus.OK);
-    }
-
+	@GetMapping("/item/{id}/image")
+	public ResponseEntity<Resource> getItemImage(@PathVariable String id) {
+		Optional<Item> item = itemService.getItemById(id);
+		if (item.isEmpty() || item.get().getImagePath() == null) {
+			return ResponseEntity.notFound().build();
+		}
+		try {
+			Path imagePath = uploadDir.resolve(item.get().getImagePath());
+			Resource resource = new UrlResource(imagePath.toUri());
+			if (!resource.exists()) {
+				return ResponseEntity.notFound().build();
+			}
+			String contentType = Files.probeContentType(imagePath);
+			if (contentType == null) {
+				contentType = MediaType.APPLICATION_OCTET_STREAM_VALUE;
+			}
+			return ResponseEntity.ok()
+					.header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + resource.getFilename() + "\"")
+					.contentType(MediaType.parseMediaType(contentType))
+					.body(resource);
+		} catch (MalformedURLException e) {
+			return ResponseEntity.notFound().build();
+		} catch (IOException e) {
+			return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+		}
+	}
 }
+
